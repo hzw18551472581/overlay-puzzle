@@ -1,5 +1,5 @@
 import { createRng, randInt, shuffle } from './rng';
-import { SHAPES, COLORS, cellsAt } from './shapes';
+import { SHAPES, COLORS, cellsAt, validateSolutionVisibility } from './shapes';
 
 const GRID = 10;
 const TOTAL_LEVELS = 20;
@@ -42,8 +42,7 @@ export function pieceCountForLevel(level) {
   return 20 + Math.floor(((level - 1) * 10) / (TOTAL_LEVELS - 1));
 }
 
-export function generateLevel(level) {
-  const rng = createRng(level * 7919 + 104729);
+function buildLevel(rng, level) {
   const total = pieceCountForLevel(level);
   const correctCount = Math.max(1, Math.round(total * 0.55));
   const answer = emptyGrid();
@@ -57,6 +56,8 @@ export function generateLevel(level) {
     stackPiece(answer, zGrid, cells, gx, gy, color, i);
     solution.push({ cells, color, gx, gy, z: i });
   }
+
+  if (!validateSolutionVisibility(solution)) return null;
 
   const pieces = solution.map((s, idx) => ({
     id: idx,
@@ -90,6 +91,50 @@ export function generateLevel(level) {
     p.id = i;
   });
 
+  return { level, answer, pieces, solution };
+}
+
+export function generateLevel(level) {
+  const baseSeed = level * 7919 + 104729;
+  for (let attempt = 0; attempt < 80; attempt++) {
+    const rng = createRng(baseSeed + attempt * 9973);
+    const result = buildLevel(rng, level);
+    if (result) return result;
+  }
+  const rng = createRng(baseSeed);
+  const total = pieceCountForLevel(level);
+  const answer = emptyGrid();
+  const cells = SHAPES[0].map((c) => [...c]);
+  const color = COLORS[0];
+  stackPiece(answer, Array.from({ length: GRID }, () => Array(GRID).fill(-1)), cells, 4, 4, color, 0);
+  const solution = [{ cells, color, gx: 4, gy: 4, z: 0 }];
+  const pieces = solution.map((s, idx) => ({
+    id: idx,
+    cells: s.cells,
+    color: s.color,
+    placed: false,
+    gridX: 0,
+    gridY: 0,
+    z: 0,
+    isCorrect: true,
+    solutionX: s.gx,
+    solutionY: s.gy,
+    solutionZ: s.z,
+  }));
+  for (let i = 1; i < total; i++) {
+    pieces.push({
+      id: i,
+      cells: pickShape(rng),
+      color: pickColor(rng),
+      placed: false,
+      gridX: 0,
+      gridY: 0,
+      z: 0,
+      isCorrect: false,
+    });
+  }
+  shuffle(rng, pieces);
+  pieces.forEach((p, i) => { p.id = i; });
   return { level, answer, pieces, solution };
 }
 

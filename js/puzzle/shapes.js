@@ -53,3 +53,32 @@ export function paintGrid(grid, cells, gx, gy, color) {
     grid[y][x] = color;
   });
 }
+
+export function validateSolutionVisibility(pieces) {
+  const solution = pieces.filter((p) => p.isCorrect !== false && (
+    p.solutionX != null || p.gridX != null || p.gx != null
+  ));
+  if (!solution.length) return true;
+  for (const p of solution) {
+    const gx = p.gridX ?? p.solutionX ?? p.gx;
+    const gy = p.gridY ?? p.solutionY ?? p.gy;
+    const z = p.z ?? p.solutionZ;
+    let visible = false;
+    for (const [dx, dy] of p.cells) {
+      const x = gx + dx;
+      const y = gy + dy;
+      let topZ = -1;
+      for (const q of solution) {
+        const qgx = q.gridX ?? q.solutionX ?? q.gx;
+        const qgy = q.gridY ?? q.solutionY ?? q.gy;
+        const qz = q.z ?? q.solutionZ;
+        for (const [qdx, qdy] of q.cells) {
+          if (qgx + qdx === x && qgy + qdy === y && qz > topZ) topZ = qz;
+        }
+      }
+      if (z === topZ) visible = true;
+    }
+    if (!visible) return false;
+  }
+  return true;
+}

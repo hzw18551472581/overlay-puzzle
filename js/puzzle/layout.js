@@ -29,7 +29,7 @@ function buildButtons(leftX, leftW, startY) {
   return { rows, add, endY: () => y };
 }
 
-export function computeLayout(materialScroll, showLayerTools) {
+export function computeLayout(materialScroll, showLayerTools, hintLabel) {
   const safe = getSafeArea();
   const pad = 10;
   const leftInner = Math.max(160, SCREEN_WIDTH * 0.24);
@@ -46,17 +46,19 @@ export function computeLayout(materialScroll, showLayerTools) {
 
   const leftX = safe.left + pad;
   const btnW = leftInner - pad;
-  const btnRows = showLayerTools ? 3 : 2;
+  const toolRows = showLayerTools ? 3 : 1;
+  const btnRows = 1 + toolRows + 1;
   const btnAreaH = btnRows * 32 + (btnRows - 1) * 6;
   const btnStartY = SCREEN_HEIGHT - pad - btnAreaH;
   const headerY = topPad + 6;
-  const previewY = headerY + 50;
+  const previewY = headerY + 62;
   const previewMax = Math.min(btnW, btnStartY - previewY - 12, 170);
   const previewCell = Math.max(1, Math.floor(Math.max(0, previewMax) / 10));
   const previewSize = previewCell * 10;
   const previewX = leftX + (btnW - previewSize) / 2;
 
   const btnBuilder = buildButtons(leftX, btnW, btnStartY);
+  btnBuilder.add('hint', hintLabel || '提示', 0, 2);
   if (showLayerTools) {
     btnBuilder.add('layerUp', '上移 ↑', 0);
     btnBuilder.add('layerDown', '下移 ↓', 1);

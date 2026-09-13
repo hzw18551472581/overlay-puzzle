@@ -1,6 +1,8 @@
 import { computeLayout, boardToGrid, materialIndexAt, gridToBoard, materialSlotRect, snapPieceGrid, materialMaxScroll } from './layout';
-import { shapeBounds } from './shapes';
-import { hitTestButtons, hitTestModal, hitTestMenu } from './render';
+import { shapeBounds, SHAPES, COLORS } from './shapes';
+import { hitTestButtons, hitTestModal, hitTestMenu, hitTestRank } from './render';
+import PuzzleEngine from './engine';
+import { computeEditorLayout, hitTestEditor, hitTestEditorModal, editorSnapGrid } from './editor';
 
 const DRAG_THRESHOLD = 8;
 const SCROLL_THRESHOLD = 8;
@@ -12,6 +14,8 @@ export default class InputHandler {
   touchStart = null;
   materialTouch = null;
   materialFloat = null;
+  editorDrag = null;
+  editorTouch = null;
   scrollStartY = null;
   scrolling = false;
   needsRender = true;
@@ -29,11 +33,13 @@ export default class InputHandler {
   getLayout() {
     const sel = this.engine.selectedId != null ? this.engine.getPiece(this.engine.selectedId) : null;
     const showLayer = !!(sel && sel.placed);
-    let layout = computeLayout(this.engine.materialScroll, showLayer);
+    const hintLeft = PuzzleEngine.MAX_HINTS - this.engine.hintsUsed;
+    const hintLabel = hintLeft > 0 ? `提示 (${hintLeft})` : '提示 (0)';
+    let layout = computeLayout(this.engine.materialScroll, showLayer, hintLabel);
     const max = materialMaxScroll(layout, this.engine.unplacedPieces().length);
     if (this.engine.materialScroll > max) {
       this.engine.materialScroll = max;
-      layout = computeLayout(this.engine.materialScroll, showLayer);
+      layout = computeLayout(this.engine.materialScroll, showLayer, hintLabel);
     }
     return layout;
   }
@@ -50,10 +56,22 @@ export default class InputHandler {
   onTouchStart(e) {
     const t = e.touches[0];
     const { x, y } = this.touchXY(t);
+    if (this.engine.screen === 'editor') {
+      this.onEditorTouchStart(x, y);
+      return;
+    }
+    if (this.engine.screen === 'rank') {
+      if (hitTestRank(x, y) === 'rankBack') this.engine.closeRank();
+      this.markDirty();
+      return;
+    }
     if (this.engine.screen === 'menu') {
       const hit = hitTestMenu(this.engine, x, y);
       if (hit === 'continue') this.engine.continueGame();
       else if (hit === 'newGame') this.engine.newGame();
+      else if (hit === 'rank') this.engine.openRank();
+      else if (hit === 'share') this.engine.shareGame();
+      else if (hit === 'editor') this.engine.editor.open();
       this.markDirty();
       return;
     }
@@ -143,6 +161,10 @@ export default class InputHandler {
   onTouchMove(e) {
     const t = e.touches[0];
     const { x, y } = this.touchXY(t);
+    if (this.engine.screen === 'editor') {
+      this.onEditorTouchMove(x, y);
+      return;
+    }
     const layout = this.getLayout();
 
     if (this.materialTouch && !this.drag && !this.materialFloat) {
@@ -283,6 +305,10 @@ export default class InputHandler {
   onTouchEnd(e) {
     const t = e.changedTouches[0];
     const { x, y } = this.touchXY(t);
+    if (this.engine.screen === 'editor') {
+      this.onEditorTouchEnd(x, y);
+      return;
+    }
 
     if (this.drag) {
       const layout = this.getLayout();
@@ -377,9 +403,142 @@ export default class InputHandler {
       case 'home':
         this.engine.requestExitToMenu();
         break;
+      case 'hint':
+        this.engine.useHint();
+        break;
       default:
         break;
     }
+  }
+
+  onEditorTouchStart(x, y) {
+    const ed = this.engine.editor;
+    this.editorDrag = null;
+    this.editorTouch = null;
+    if (ed.modal) {
+      if (hitTestEditorModal(ed, x, y) === 'dismiss') ed.modal = null;
+      this.markDirty();
+      return;
+    }
+    const layout = computeEditorLayout(ed);
+    const hit = hitTestEditor(layout, x, y);
+    if (hit === 'edBack') ed.close();
+    else if (hit === 'edClear') ed.clearAll();
+    else if (hit === 'edDecoy') ed.addDecoy();
+    else if (hit === 'edDel') ed.removeSelected();
+    else if (hit === 'edSave') ed.saveLevel();
+    else if (hit === 'edTest') ed.testPlay();
+    else if (hit === 'edShare') ed.shareLevel();
+    else if (hit === 'edLayerUp' && ed.selectedId != null) ed.layerUp(ed.selectedId);
+    else if (hit === 'edLayerDown' && ed.selectedId != null) ed.layerDown(ed.selectedId);
+    else if (hit === 'shapePrev') ed.cycleShape(-1);
+    else if (hit === 'shapeNext') ed.cycleShape(1);
+    else if (hit === 'colorPrev') ed.cycleColor(-1);
+    else if (hit === 'colorNext') ed.cycleColor(1);
+    else if (hit === 'preview') {
+      const cells = SHAPES[ed.shapeIdx].map((c) => [...c]);
+      const color = COLORS[ed.colorIdx];
+      const pv = layout.preview;
+      const b = shapeBounds(cells);
+      const ox = pv.x + (pv.size - b.w * pv.cell) / 2;
+      const oy = pv.y + (pv.size - b.h * pv.cell) / 2;
+      const grab = this.grabOffset(cells, pv.cell, ox, oy, x, y);
+      this.editorTouch = {
+        source: 'palette',
+        x, y,
+        cells,
+        color,
+        grabOx: grab.ox,
+        grabOy: grab.oy,
+      };
+    } else {
+      const g = ed.boardToGrid(layout, x, y);
+      if (g) {
+        const found = ed.findPieceAt(g.gx, g.gy);
+        if (found) {
+          ed.selectedId = found.id;
+          const posX = layout.board.x + found.gridX * layout.board.cell;
+          const posY = layout.board.y + found.gridY * layout.board.cell;
+          const grab = this.grabOffset(found.cells, layout.board.cell, posX, posY, x, y);
+          this.editorTouch = {
+            source: 'board',
+            x, y,
+            pieceId: found.id,
+            cells: found.cells,
+            color: found.color,
+            grabOx: grab.ox,
+            grabOy: grab.oy,
+            origGx: found.gridX,
+            origGy: found.gridY,
+          };
+        } else {
+          ed.selectedId = null;
+        }
+      }
+    }
+    this.markDirty();
+  }
+
+  onEditorTouchMove(x, y) {
+    const ed = this.engine.editor;
+    const layout = computeEditorLayout(ed);
+    if (this.editorTouch && !this.editorDrag) {
+      const dist = Math.hypot(x - this.editorTouch.x, y - this.editorTouch.y);
+      if (dist >= DRAG_THRESHOLD) {
+        wx.vibrateShort({ type: 'light' });
+        const t = this.editorTouch;
+        this.editorDrag = {
+          active: true,
+          source: t.source,
+          pieceId: t.pieceId,
+          cells: t.cells,
+          color: t.color,
+          grabOx: t.grabOx,
+          grabOy: t.grabOy,
+          origGx: t.origGx,
+          origGy: t.origGy,
+          x, y,
+          over: false,
+          previewGx: null,
+          previewGy: null,
+        };
+        this.editorTouch = null;
+      }
+    }
+    if (this.editorDrag) {
+      const d = this.editorDrag;
+      d.x = x;
+      d.y = y;
+      const snap = editorSnapGrid(layout, x, y, d.grabOx, d.grabOy, d.cells);
+      d.over = snap.over;
+      d.previewGx = snap.over ? snap.gx : null;
+      d.previewGy = snap.over ? snap.gy : null;
+      this.markDirty();
+    }
+  }
+
+  onEditorTouchEnd(x, y) {
+    const ed = this.engine.editor;
+    if (this.editorDrag) {
+      const d = this.editorDrag;
+      const layout = computeEditorLayout(ed);
+      const snap = editorSnapGrid(layout, x, y, d.grabOx, d.grabOy, d.cells);
+      if (snap.over) {
+        if (d.source === 'palette') ed.placeShape(snap.gx, snap.gy);
+        else if (d.source === 'board') ed.movePiece(d.pieceId, snap.gx, snap.gy);
+      }
+      this.editorDrag = null;
+      this.editorTouch = null;
+      this.markDirty();
+      return;
+    }
+    if (this.editorTouch && this.editorTouch.source === 'board') {
+      const dist = Math.hypot(x - this.editorTouch.x, y - this.editorTouch.y);
+      if (dist < DRAG_THRESHOLD) ed.selectedId = this.editorTouch.pieceId;
+    }
+    this.editorTouch = null;
+    this.editorDrag = null;
+    this.markDirty();
   }
 
   clearTouchState() {
@@ -387,6 +546,8 @@ export default class InputHandler {
     this.touchStart = null;
     this.materialTouch = null;
     this.materialFloat = null;
+    this.editorDrag = null;
+    this.editorTouch = null;
     this.scrollStartY = null;
     this.scrolling = false;
   }
@@ -408,6 +569,10 @@ export default class InputHandler {
         break;
       case 'nextLevel':
         this.engine.nextLevel();
+        break;
+      case 'customBack':
+      case 'sharedBack':
+        this.engine.returnFromCustom();
         break;
       case 'dismiss':
         if (this.engine.allClear) this.engine.loadLevel(1);
